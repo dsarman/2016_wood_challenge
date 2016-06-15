@@ -1,16 +1,17 @@
 #!/usr/bin/env python3.5
 
+import asyncio
 from behave import *
 from challenge.server import ExchangeServer
 import threading
 import ZODB
-import socket
 import json
 
-global host, port, db
+global host, port, db, loop
 host = '127.0.0.1'
 port = 15684
 db = ZODB.DB(None)
+loop = asyncio.get_event_loop()
 
 
 def start_server():
@@ -20,33 +21,44 @@ def start_server():
     return server_thread
 
 
+async def client(send_data, result):
+    reader, writer = await asyncio.streams.open_connection(
+        host, port, loop=loop)
+
+    def send(data):
+        msg = (json.dumps(data) + '\n').encode('utf-8')
+        writer.write(msg)
+
+    async def recv():
+        msg = (await reader.readline()).decode('utf-8').rstrip()
+        return json.loads(msg)
+
+    send(send_data)
+    writer.close()
+    result = await recv()
+
+
 @given("username and password")
 def step_impl(context):
-    context.st = start_server()
-    context.client_socket = socket.socket()
-    context.client_socket.connect((host, port))
+    start_server()
     context.username = context.table[0]['username']
     context.password = context.table[0]['password']
 
 
 @when(u'registering')
 def step_impl(context):
-    s = context.client_socket
-
     data = {'message': 'register',
             'username': context.username,
             'password': context.password}
-    json_data = json.dumps(data)
-    sent = s.send(json_data.encode('utf-8') + b'\n')
-    assert sent != 0, "Register was unsuccessful, no data was sent."
+    result = None
+    loop.run_until_complete(client(data, result))
+    context.result = result
 
 
 @then(u'new user is created')
 def step_impl(context):
-    connection = db.open()
-    root = connection.root()
-    print(root.users)
-    assert root.users, "User db should not be empty"
+    assert context.result, "Register response must not be empty"
+    print(context.result)
 
 
 @given(u'username and password of existing user')
