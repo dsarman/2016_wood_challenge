@@ -1,7 +1,7 @@
 #!/usr/bin/env python3.5
 
 from behave import *
-from challenge import server as server_main
+from challenge.server import ExchangeServer
 import threading
 import ZODB
 import socket
@@ -12,8 +12,10 @@ host = '127.0.0.1'
 port = 15684
 db = ZODB.DB(None)
 
+
 def start_server():
-    server_thread = threading.Thread(target=server_main.start_server(db, host, port))
+    server = ExchangeServer()
+    server_thread = threading.Thread(target=server.start(db, host, port))
     server_thread.start()
     return server_thread
 
@@ -23,17 +25,18 @@ def step_impl(context):
     context.st = start_server()
     context.client_socket = socket.socket()
     context.client_socket.connect((host, port))
+    context.username = context.table[0]['username']
+    context.password = context.table[0]['password']
 
 
 @when(u'registering')
 def step_impl(context):
     s = context.client_socket
-    username = context.table[0]['username']
-    password = context.table[0]['password']
+
     data = {'message': 'register',
-            'username': username,
-            'password': password}
-    json_data = json.dump(data)
+            'username': context.username,
+            'password': context.password}
+    json_data = json.dumps(data)
     sent = s.send(json_data.encode('utf-8') + b'\n')
     assert sent != 0, "Register was unsuccessful, no data was sent."
 
