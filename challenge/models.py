@@ -1,5 +1,5 @@
 #!/usr/bin/env python3.5
-
+import asyncio
 from persistent import Persistent
 from bcrypt import hashpw, gensalt
 from enum import Enum
@@ -14,6 +14,7 @@ class User(Persistent):
     def __init__(self) -> None:
         self.username = None  # type: str
         self.password = None  # type: bytes
+        self.writer = None  # type: asyncio.StreamWriter
 
     def set_username(self, username: str) -> None:
         self.username = username
@@ -32,14 +33,14 @@ class OrderType(Enum):
 
 class Order(Persistent):
     def __init__(self) -> None:
-        self.order_type = None  # type: OrderType
+        self.type = None  # type: OrderType
         self.user = None  # type: User
         self.price = None  # type: Decimal
         self.quantity = None  # type: int
         self.id = None  # type: int
 
     def set_type(self, order_type: OrderType):
-        self.order_type = order_type
+        self.type = order_type
 
     def set_user(self, user: User):
         self.user = user
@@ -50,18 +51,9 @@ class Order(Persistent):
     def set_quantity(self, quantity: int):
         self.quantity = quantity
 
+    def decrease_quantity(self, quantity: int):
+        assert self.quantity >= quantity, "Cannot decrease into negative"
+        self.quantity -= quantity
+
     def set_id(self, id: int):
         self.id = id
-
-class Trade(Persistent):
-    def __init__(self) -> None:
-        self.bid_order = None  # type: Order
-        self.ask_order = None  # type: Order
-
-    def set_bid_order(self, order: Order):
-        assert order.type == OrderType.bid, "Order needs to be of bid type"
-        self.bid_order = order
-
-    def set_ask_order(self, order: Order):
-        assert order.type == OrderType.ask, "Order needs to be of ask type"
-        self.ask_order = order
