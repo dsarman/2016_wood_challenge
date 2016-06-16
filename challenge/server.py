@@ -1,104 +1,134 @@
 #!/usr/bin/env python3.5
-
+import sys
+from BTrees.OOBTree import OOBTree
 from ZODB import FileStorage, DB
 import asyncio
-import sys
 import json
+import transaction
+
+from challenge.models import User
+
+
+def send_data(writer, data):
+    msg = (json.dumps(data) + '\n').encode('utf-8')
+    writer.write(msg)
+
+
+async def recv_data(reader):
+    msg = await reader.readline()
+    msg = msg.decode('utf-8').rstrip('\n')
+    return json.loads(msg)
 
 
 class ExchangeServer:
-    """
-    TCP Server heavily based on asyncio example
-    https://github.com/python/asyncio/blob/master/examples/simple_tcp_server.py
-    """
-
     def __init__(self):
-        self.server = None
-        self.clients = {}
         self.db = None
         self.connection = None
         self.db_root = None
+        self.users = None
+        self.server = None
+        self.loop = None
+        self.logged_in_clients = {}
 
-    def _accept_client(self, client_reader, client_writer) -> None:
-        """
-        Accepts a new client connection and creates a Task to handle this client.
-        self.clients is updated to keep track of new client.
-        """
-        task = asyncio.Task(self._handle_client(client_reader, client_writer))
-        self.clients[task] = (client_reader, client_writer)
+    async def _accept_connection(self, reader, writer):
+        login_data = await recv_data(reader)
+        logged_in, login_response = self._login(login_data)
+        send_data(writer, login_response)
+        if not logged_in:
+            writer.close()
+        else:
+            # start new Task to handle this specific client connection
+            task = asyncio.Task(self._handle_client(reader, writer))
+            self.logged_in_clients[task] = (reader, writer)
 
-        def client_done(done_task):
-            print("Client task done:", done_task, file=sys.stderr)
-            del self.clients[done_task]
+            def client_done(done_task):
+                print("Client task done:{}".format(done_task))
+                del self.logged_in_clients[done_task]
 
-        task.add_done_callback(client_done)
+            task.add_done_callback(client_done)
 
-    async def _handle_client(self, client_reader, client_writer):
-        """
-        Does the work to handle request for specific client.
-        """
+    async def _handle_client(self, reader, writer):
         while True:
-            data = (await client_reader.readline()).decode("utf-8").rstrip('\n')
+            data = await recv_data(reader)
             if not data:  # empty string means the client disconnected
                 break
-            data_dict = json.loads(data)
-            message_type = data_dict['message']
-            if message_type == 'createOrder':
+            msg_type = data['message']
+            if msg_type == 'createOrder':
                 raise NotImplementedError
-            elif message_type == 'cancelOrder':
-                raise NotImplementedError
-            elif message_type == 'register':
+            elif msg_type == 'cancelOrder':
                 raise NotImplementedError
             else:
-                raise ValueError('Unexpected client message type: {}'.format(message_type))
+                raise ValueError("Message has to have a valid \'message\' field.")
 
-            await client_writer.drain()
+            await writer.drain()
 
-    def start_tcp(self, loop: asyncio.AbstractEventLoop, host: str, port: int) -> None:
-        """
-        Starts the TCP server, and listens on specified host and port
-
-        For each client that connects, the accept_client method gets called.
-        This method runs the loop until the server sockets are ready to accept connections.
-        """
-        self.server = loop.run_until_complete(
-            asyncio.streams.start_server(self._accept_client,
-                                         host, port,
-                                         loop=loop))
-
-    def start(self, db: DB, host: str, port: int, loop: asyncio.AbstractEventLoop=None):
-        self.connect_db(db)
-        if loop is None:
-            self.start_tcp(asyncio.get_event_loop(), host, port)
+    def _login(self, login_data):
+        data = {'type': 'login'}
+        if 'message' not in login_data or login_data['message'] != 'login':
+            data['action'] = 'denied'
+            return False, data
+        username = login_data['username']
+        password = login_data['password']
+        password_matches = None
+        if username in self.users.keys():
+            password_matches = self.users[username].check_password(password)
         else:
-            self.start_tcp(loop, host, port)
+            user = User()
+            user.set_username(username)
+            user.set_password(password)
+            self.users[username] = user
+            print("Creating new user: {}".format(user))
+            transaction.commit()
 
-    def connect_db(self, db: DB):
+        if password_matches:
+            data['action'] = 'logged_in'
+            return True, data
+        elif password_matches is None:
+            data['action'] = 'registered'
+            return False, data
+        else:
+            data['action'] = 'denied'
+            return False, data
+
+    def init_db(self, db: DB):
         self.db = db
         self.connection = db.open()
         self.db_root = self.connection.root()
+        if 'userdb' not in self.db_root.keys():
+            self.db_root['userdb'] = OOBTree()
+        self.users = self.db_root['userdb']
 
-    def stop(self, loop: asyncio.AbstractEventLoop) -> None:
-        """
-        Stops the TCP server, i.e. closes the listening socket(s)
+    def start(self, host, port, db=None, loop=None):
+        if loop is None:
+            self.loop = asyncio.get_event_loop()
+        else:
+            self.loop = loop
+        if db is None:
+            storage = FileStorage.FileStorage('database.fs')
+            db = DB(storage)
+        self.init_db(db)
+        handle_coro = asyncio.start_server(self._accept_connection, host, port, loop=self.loop)
+        self.server = self.loop.run_until_complete(handle_coro)
 
-        This method runs the loop until the server sockets are closed.
-        """
-        if self.server is not None:
-            self.server.close()
-            loop.run_until_complete(self.server.wait_closed())
-            self.server = None
+        print("Serving on {}".format(self.server.sockets[0].getsockname()))
+
+        try:
+            self.loop.run_forever()
+        except KeyboardInterrupt:
+            pass
+
+    def stop(self):
+        self.server.close()
+        self.loop.run_until_complete(self.server.wait_closed())
+        self.loop.close()
 
 if __name__ == '__main__':
-    assert len(sys.argv) == 3, 'Usage: server.py hostname port'
+    assert len(sys.argv) >= 3, 'Usage: server.py host port'
     host = sys.argv[1]
     port = int(sys.argv[2])
-
-    storage = FileStorage.FileStorage('database.fs')
-    db = DB(storage)
-
-    loop = asyncio.get_event_loop()
+    db = None
+    if len(sys.argv) >= 4 and sys.argv[3] == '--memory-db':
+        db = DB(None)
 
     server = ExchangeServer()
-    server.connect_db(db)
-    server.start_tcp(loop, host, port)
+    server.start(host, port, db)

@@ -6,8 +6,8 @@ from enum import Enum
 from decimal import Decimal
 
 
-def get_passw_hash(password):
-    return hashpw(password, gensalt())
+def get_passw_hash(password, salt=gensalt()):
+    return hashpw(password.encode('utf-8'), salt)
 
 
 class User(Persistent):
@@ -22,7 +22,7 @@ class User(Persistent):
         self.password = get_passw_hash(password)
 
     def check_password(self, password: str) -> bool:
-        return self.password == get_passw_hash(password)
+        return get_passw_hash(password, self.password) == self.password
 
 
 class OrderType(Enum):
