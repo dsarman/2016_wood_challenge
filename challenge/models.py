@@ -36,6 +36,7 @@ class Order(Persistent):
         self.user = None  # type: User
         self.price = None  # type: Decimal
         self.quantity = None  # type: int
+        self.id = None  # type: int
 
     def set_type(self, order_type: OrderType):
         self.order_type = order_type
@@ -49,6 +50,8 @@ class Order(Persistent):
     def set_quantity(self, quantity: int):
         self.quantity = quantity
 
+    def set_id(self, id: int):
+        self.id = id
 
 class Trade(Persistent):
     def __init__(self) -> None:
