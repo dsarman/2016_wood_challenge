@@ -10,8 +10,6 @@ from challenge.server import ExchangeServer
 
 host = '127.0.0.1'
 port = 15684
-db = ZODB.DB(None)
-
 
 class FakeClient:
     def __init__(self, loop):
@@ -59,8 +57,8 @@ class ServerUnitTest(unittest.TestCase):
     def setUp(self):
         self.server_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(None)
-        self.server = ExchangeServer(host, port)
-        self.server_thread = threading.Thread(target=self.server.start, args=(db, self.server_loop))
+        self.server = ExchangeServer(host, port, True)
+        self.server_thread = threading.Thread(target=self.server.start, args=(ZODB.DB(None), self.server_loop))
         self.server_thread.start()
 
         time.sleep(0.1)
@@ -76,8 +74,8 @@ class ServerUnitTest(unittest.TestCase):
         return future.result()
 
     def tearDown(self):
-        self.server.stop()
-        self.server_thread.join(1)
+        self.server_loop.call_soon_threadsafe(self.server.stop)
+        self.server_thread.join()
         self.server_loop.close()
         self.client.disconnect()
         self.client_loop.close()

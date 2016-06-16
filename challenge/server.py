@@ -10,14 +10,17 @@ import asyncio
 import json
 import transaction
 
+
 def decimal_decode(obj):
     if isinstance(obj, Decimal):
         return str(obj)
 
+
 class ExchangeServer:
-    def __init__(self, host, port):
+    def __init__(self, host, port, debug=False):
         self.host = host
         self.port = port
+        self.debug = debug
         self.db = None
         self.connection = None
         self.db_root = None
@@ -38,22 +41,9 @@ class ExchangeServer:
         if user is None:
             writer.close()
         else:
-            # start new Task to handle this specific client connection
-            # task = asyncio.Task(self._handle_client(reader, writer, user), loop=self.loop)
-            # self.logged_in_users_tasks[user.username] = task
-            # self.logged_in_clients[task] = (reader, writer)
-            #
-            # def client_done(done_task):
-            #     print("Client task done:{}".format(done_task))
-            #     res = self.logged_in_clients.pop(task)
-            #     username = res[2]
-            #     del self.logged_in_users_tasks[username]
-            #
-            # task.add_done_callback(client_done)
             self.logged_in_clients[user.username] = (reader, writer)
             print("Logged in clients: {}".format(self.logged_in_clients))
             await self._handle_client(reader, writer, user)
-
 
     async def _handle_client(self, reader, writer, user):
         while True:
@@ -173,11 +163,17 @@ class ExchangeServer:
             pass
 
     def stop(self):
-        if self.server is not None:
-            self.server.close()
-            self.loop.run_until_complete(self.server.wait_closed())
-            self.server = None
-            self.loop.close()
+        # TODO find a nicer solution
+        try:
+            if self.server is not None:
+                self.server.close()
+                self.loop.run_until_complete(self.server.wait_closed())
+                self.server = None
+                self.loop.close()
+        except RuntimeError as e:
+            if str(e) != "Event loop is running.":
+                raise e
+
 
 if __name__ == '__main__':
     assert len(sys.argv) >= 3, 'Usage: server.py host port'
