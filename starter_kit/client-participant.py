@@ -38,11 +38,20 @@ async def main():
 
     # Run Read-Eval-Print loop.
     try:
+        await login(userInput, writer)
         await repl(userInput, writer)
     finally:
         bgLogger.cancel()
         writer.close()
 
+async def login(userInput: asyncio.Queue, writer: asyncio.StreamWriter) -> None:
+    username = await prompt(userInput, 'Username?')
+    password = await prompt(userInput, 'Password?')
+    await sendMessage(writer, {
+        'message': 'login',
+        'username': username,
+        'password': password
+    })
 
 async def readIncomingData(reader: asyncio.StreamReader) -> None:
     async for line in utils.LineReader(reader):
