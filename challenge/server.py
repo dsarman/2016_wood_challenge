@@ -1,12 +1,11 @@
 #!/usr/bin/env python3.5
-import sys
 from BTrees.OOBTree import OOBTree
 from ZODB import FileStorage, DB
+from challenge.models import User, Order, OrderType
+import sys
 import asyncio
 import json
 import transaction
-
-from challenge.models import User
 
 
 def send_data(writer, data):
@@ -21,24 +20,29 @@ async def recv_data(reader):
 
 
 class ExchangeServer:
-    def __init__(self):
+    def __init__(self, host, port):
+        self.host = host
+        self.port = port
         self.db = None
         self.connection = None
         self.db_root = None
         self.users = None
+        self.bid_orders = None
+        self.ask_orders = None
         self.server = None
         self.loop = None
         self.logged_in_clients = {}
+        self.order_queue = asyncio.Queue(loop=self.loop)
 
     async def _accept_connection(self, reader, writer):
         login_data = await recv_data(reader)
-        logged_in, login_response = self._login(login_data)
+        user, login_response = self._login(login_data)
         send_data(writer, login_response)
-        if not logged_in:
+        if user is None:
             writer.close()
         else:
             # start new Task to handle this specific client connection
-            task = asyncio.Task(self._handle_client(reader, writer))
+            task = asyncio.Task(self._handle_client(reader, writer, user))
             self.logged_in_clients[task] = (reader, writer)
 
             def client_done(done_task):
@@ -47,20 +51,38 @@ class ExchangeServer:
 
             task.add_done_callback(client_done)
 
-    async def _handle_client(self, reader, writer):
+    async def _handle_client(self, reader, writer, user):
         while True:
             data = await recv_data(reader)
             if not data:  # empty string means the client disconnected
                 break
             msg_type = data['message']
             if msg_type == 'createOrder':
-                raise NotImplementedError
+                self._create_order(writer, data, user)
             elif msg_type == 'cancelOrder':
                 raise NotImplementedError
             else:
                 raise ValueError("Message has to have a valid \'message\' field.")
 
             await writer.drain()
+
+    def _create_order(self, writer, order_data, user):
+        new_order = Order()
+        new_order.set_user(user)
+        new_order.set_price(order_data['price'])
+        new_order.set_quantity(order_data['quantity'])
+        new_order.set_id(order_data['order_id'])
+        if order_data['side'] == 'BUY':
+            new_order.set_type(OrderType.ask)
+        elif order_data['side'] == 'SELL':
+            new_order.set_type(OrderType.bid)
+        else:
+            raise ValueError("Create order needs to have type \'BUY\' or \'SELL\'")
+        transaction.commit()
+
+
+
+        self.order_queue.put((new_order, writer))
 
     def _login(self, login_data):
         data = {'type': 'login'}
@@ -70,8 +92,10 @@ class ExchangeServer:
         username = login_data['username']
         password = login_data['password']
         password_matches = None
+        user = None
         if username in self.users.keys():
-            password_matches = self.users[username].check_password(password)
+            user = self.users[username]
+            password_matches = user.check_password(password)
         else:
             user = User()
             user.set_username(username)
@@ -82,13 +106,13 @@ class ExchangeServer:
 
         if password_matches:
             data['action'] = 'logged_in'
-            return True, data
+            return user, data
         elif password_matches is None:
             data['action'] = 'registered'
-            return False, data
+            return None, data
         else:
             data['action'] = 'denied'
-            return False, data
+            return None, data
 
     def init_db(self, db: DB):
         self.db = db
@@ -98,16 +122,22 @@ class ExchangeServer:
             self.db_root['userdb'] = OOBTree()
         self.users = self.db_root['userdb']
 
-    def start(self, host, port, db=None, loop=None):
+        if 'biddb' not in self.db_root.keys():
+            self.bid_orders = self.db_root['biddb']
+
+        if 'askdb' not in self.db_root.keys():
+            self.ask_orders = self.db_root['askdb']
+
+    def start(self, db=None, loop=None):
         if loop is None:
-            self.loop = asyncio.get_event_loop()
+            self.loop = asyncio.new_event_loop()
         else:
             self.loop = loop
         if db is None:
             storage = FileStorage.FileStorage('database.fs')
             db = DB(storage)
         self.init_db(db)
-        handle_coro = asyncio.start_server(self._accept_connection, host, port, loop=self.loop)
+        handle_coro = asyncio.start_server(self._accept_connection, self.host, self.port, loop=self.loop)
         self.server = self.loop.run_until_complete(handle_coro)
 
         print("Serving on {}".format(self.server.sockets[0].getsockname()))
@@ -118,9 +148,12 @@ class ExchangeServer:
             pass
 
     def stop(self):
-        self.server.close()
-        self.loop.run_until_complete(self.server.wait_closed())
-        self.loop.close()
+        if self.server is not None:
+            self.server.close()
+            self.loop.run_until_complete(self.server.wait_closed())
+            self.server = None
+            self.loop.close()
+
 
 if __name__ == '__main__':
     assert len(sys.argv) >= 3, 'Usage: server.py host port'
@@ -130,5 +163,5 @@ if __name__ == '__main__':
     if len(sys.argv) >= 4 and sys.argv[3] == '--memory-db':
         db = DB(None)
 
-    server = ExchangeServer()
-    server.start(host, port, db)
+    server = ExchangeServer(host, port)
+    server.start(db)
