@@ -20,20 +20,23 @@ class ExchangeServer:
     """
     Simple asyncio TCP server for one stock.
     """
-    def __init__(self, host, port, debug=False):
+
+    def __init__(self, host, private_port, public_port=None, debug=False):
         self.host = host  # type: str
-        self.port = port  # type: int
+        self.private_port = private_port  # type: int
+        self.public_port = public_port  # type: int
         self.debug = debug  # type: bool
         self.db = None  # type: ZODB.DB
         self.connection = None  # type: ZODB.Connection.Connection
-        self.db_root = None   # type: persistent.mapping.PersistentMapping
-        self.users = None   # type:  BTrees.OOBTree.OOBTree
-        self.bid_orders = None   # type: BTrees.OOBTree.OOBTree
-        self.ask_orders = None   # type: BTrees.OOBTree.OOBTree
-        self.server = None   # type: AbstractServer
-        self.loop = None   # type: AbstractEventLoop
-        self.logged_in_clients = {}   # type: Dict[str, (StreamReader, StreamWriter)]
-        self.matching_engine = None   # type: MatchingEngine
+        self.db_root = None  # type: persistent.mapping.PersistentMapping
+        self.users = None  # type:  BTrees.OOBTree.OOBTree
+        self.bid_orders = None  # type: BTrees.OOBTree.OOBTree
+        self.ask_orders = None  # type: BTrees.OOBTree.OOBTree
+        self.private_server = None  # type: AbstractServer
+        self.public_server = None  # type: AbstractServer
+        self.loop = None  # type: AbstractEventLoop
+        self.logged_in_clients = {}  # type: Dict[str, (StreamReader, StreamWriter)]
+        self.matching_engine = None  # type: MatchingEngine
 
     async def _accept_connection(self, reader: StreamReader, writer: StreamWriter) -> None:
         """
@@ -51,6 +54,9 @@ class ExchangeServer:
             self.logged_in_clients[user.username] = (reader, writer)
             print("Logged in clients: {}".format(self.logged_in_clients))
             await self._handle_client(reader, writer, user)
+
+    async def _accept_public_connection(self, reader: StreamReader, writer: StreamWriter):
+        pass
 
     async def _handle_client(self, reader: StreamReader, writer: StreamWriter, user: User) -> None:
         """
@@ -136,6 +142,7 @@ class ExchangeServer:
         """
         Sends data using supplied writer.
         """
+
         def decimal_decode(obj):
             if isinstance(obj, decimal.Decimal):
                 return str(obj)
@@ -198,10 +205,16 @@ class ExchangeServer:
         self.init_db(db)
         self.matching_engine = MatchingEngine(self.bid_orders, self.ask_orders, self)
 
-        handle_coro = start_server(self._accept_connection, self.host, self.port, loop=self.loop)
-        self.server = self.loop.run_until_complete(handle_coro)
-
-        print("Serving on {}".format(self.server.sockets[0].getsockname()))
+        if self.private_port is not None:
+            private_handle_coro = start_server(self._accept_connection, self.host, self.private_port,
+                                               loop=self.loop, reuse_address=True)
+            self.private_server = self.loop.run_until_complete(private_handle_coro)
+            print("Serving private on {}".format(self.private_server.sockets[0].getsockname()))
+        if self.public_port is not None:
+            public_handle_coro = start_server(self._accept_public_connection, self.host, self.public_port,
+                                              loop=self.loop, reuse_address=True)
+            self.public_server = self.loop.run_until_complete(public_handle_coro)
+            print("Serving public on {}".format(self.public_server.sockets[0].getsockname()))
 
         try:
             self.loop.run_forever()
@@ -211,23 +224,29 @@ class ExchangeServer:
     def stop(self) -> None:
         # TODO find a nicer solution
         try:
-            if self.server is not None:
-                self.server.close()
-                self.loop.run_until_complete(self.server.wait_closed())
-                self.server = None
-                self.loop.close()
+            if self.private_server is not None:
+                self.private_server.close()
+                self.loop.run_until_complete(self.private_server.wait_closed())
+                self.private_server = None
+            if self.public_server is not None:
+                self.public_server.close()
+                self.loop.run_until_complete(self.public_server.wait_closed())
+                self.public_server = None
+            self.loop.close()
+
         except RuntimeError as e:
             if str(e) != "Event loop is running.":
                 raise e
 
 
 if __name__ == '__main__':
-    assert len(sys.argv) >= 3, 'Usage: server.py host port'
+    assert len(sys.argv) >= 4, 'Usage: server.py host private-port public-port'
     host = sys.argv[1]
-    port = int(sys.argv[2])
+    private_port = int(sys.argv[2])
+    public_port = int(sys.argv[3])
     db = None
-    if len(sys.argv) >= 4 and sys.argv[3] == '--memory-db':
+    if len(sys.argv) >= 5 and sys.argv[4] == '--memory-db':
         db = ZODB.DB(None)
 
-    server = ExchangeServer(host, port)
+    server = ExchangeServer(host, private_port, public_port)
     server.start(db)

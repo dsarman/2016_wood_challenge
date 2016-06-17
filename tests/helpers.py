@@ -9,7 +9,7 @@ import time
 from challenge.server import ExchangeServer
 
 host = '127.0.0.1'
-port = 15684
+port = 1234
 
 class FakeClient:
     def __init__(self, loop):
@@ -56,15 +56,13 @@ class FakeClient:
 class ServerUnitTest(unittest.TestCase):
     def setUp(self):
         self.server_loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(None)
-        self.server = ExchangeServer(host, port, True)
+        self.server = ExchangeServer(host, port, None, True)
         self.server_thread = threading.Thread(target=self.server.start, args=(ZODB.DB(None), self.server_loop))
         self.server_thread.start()
 
-        time.sleep(0.1)
+        time.sleep(0.01)
 
         self.client_loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(None)
         self.client = FakeClient(self.client_loop)
 
     def getResult(self, function):
