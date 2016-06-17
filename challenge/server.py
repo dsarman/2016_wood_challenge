@@ -1,38 +1,45 @@
 #!/usr/bin/env python3.5
-from BTrees.OOBTree import OOBTree
-from ZODB import FileStorage, DB
-from decimal import Decimal
 
 from challenge.matching import MatchingEngine
 from challenge.models import User, Order, OrderType
+from typing import Dict
+from asyncio import StreamReader, StreamWriter, AbstractEventLoop, AbstractServer, new_event_loop, start_server
+import ZODB
+import ZODB.Connection
+import ZODB.FileStorage
+import persistent
+import persistent.mapping
+import decimal
+import BTrees.OOBTree
 import sys
-import asyncio
 import json
 import transaction
 
 
-def decimal_decode(obj):
-    if isinstance(obj, Decimal):
-        return str(obj)
-
-
 class ExchangeServer:
+    """
+    Simple asyncio TCP server for one stock.
+    """
     def __init__(self, host, port, debug=False):
-        self.host = host
-        self.port = port
-        self.debug = debug
-        self.db = None
-        self.connection = None
-        self.db_root = None
-        self.users = None
-        self.bid_orders = None
-        self.ask_orders = None
-        self.server = None
-        self.loop = None
-        self.logged_in_clients = {}
-        self.matching_engine = None
+        self.host = host  # type: str
+        self.port = port  # type: int
+        self.debug = debug  # type: bool
+        self.db = None  # type: ZODB.DB
+        self.connection = None  # type: ZODB.Connection.Connection
+        self.db_root = None   # type: persistent.mapping.PersistentMapping
+        self.users = None   # type:  BTrees.OOBTree.OOBTree
+        self.bid_orders = None   # type: BTrees.OOBTree.OOBTree
+        self.ask_orders = None   # type: BTrees.OOBTree.OOBTree
+        self.server = None   # type: AbstractServer
+        self.loop = None   # type: AbstractEventLoop
+        self.logged_in_clients = {}   # type: Dict[str, (StreamReader, StreamWriter)]
+        self.matching_engine = None   # type: MatchingEngine
 
-    async def _accept_connection(self, reader, writer):
+    async def _accept_connection(self, reader: StreamReader, writer: StreamWriter) -> None:
+        """
+        Coroutine that accepts incoming client connections, launches the login process
+        and message handling coroutine.
+        """
         msg = await reader.readline()
         login_data = self._decode_msg(msg)
         user, login_response = self._login(login_data)
@@ -45,7 +52,11 @@ class ExchangeServer:
             print("Logged in clients: {}".format(self.logged_in_clients))
             await self._handle_client(reader, writer, user)
 
-    async def _handle_client(self, reader, writer, user):
+    async def _handle_client(self, reader: StreamReader, writer: StreamWriter, user: User) -> None:
+        """
+        Coroutine which loops over the received lines and launches corresponding action.
+        Does the main work with handling private client messages.
+        """
         while True:
             msg = await reader.readline()
             if not msg:  # empty string means the client disconnected
@@ -62,11 +73,17 @@ class ExchangeServer:
             await writer.drain()
         del self.logged_in_clients[user.username]
 
-    def _create_order(self, writer, order_data, user):
+    def _create_order(self, writer: StreamWriter, order_data: Dict[str, str], user: User) -> None:
+        """
+        Create new order from user using order data.
+
+        Writer is passed along to allow reporting status to user without looking up
+        his writer.
+        """
         print("Creating order")
         new_order = Order()
         new_order.set_user(user)
-        new_order.set_price(int(order_data['price']))
+        new_order.set_price(decimal.Decimal(order_data['price']))
         new_order.set_quantity(int(order_data['quantity']))
         new_order.set_id(int(order_data['orderId']))
         if order_data['side'] == 'BUY':
@@ -79,7 +96,13 @@ class ExchangeServer:
         self.matching_engine.insert_order(new_order)
         self.matching_engine.process_order(new_order, writer)
 
-    def _login(self, login_data):
+    def _login(self, login_data: Dict[str, str]) -> (User, Dict[str, str]):
+        """
+        Handles client login after connecting.
+
+        If the supplied username exist, try to log into it using supplied password,
+        if the username is new, register it with supplied password.
+        """
         data = {'type': 'login'}
         if 'message' not in login_data or login_data['message'] != 'login':
             data['action'] = 'denied'
@@ -109,50 +132,73 @@ class ExchangeServer:
             return None, data
 
     @staticmethod
-    def _send_data(writer, data):
+    def _send_data(writer: StreamWriter, data: Dict[str, str]) -> None:
+        """
+        Sends data using supplied writer.
+        """
+        def decimal_decode(obj):
+            if isinstance(obj, decimal.Decimal):
+                return str(obj)
+
         msg = (json.dumps(data, default=decimal_decode) + '\n').encode('utf-8')
         writer.write(msg)
 
-    def _decode_msg(self, msg):
+    @staticmethod
+    def _decode_msg(msg: bytes) -> Dict[str, str]:
+        """
+        Decodes message from string to json.
+        """
         assert msg is not None, "Cannot decode empty message"
         msg = msg.decode('utf-8').rstrip('\n')
         return json.loads(msg)
 
-    def send_data(self, data, user=None, writer=None):
+    def send_data(self, data: Dict[str, str], user: User = None, writer: StreamWriter = None) -> None:
+        """
+        If no writer is supplied, retrieve it for the supplied user,
+        otherwise use supplied one.
+        Send supplied data using this writer.
+        """
         assert user is not None or writer is not None, "You must supply user or writer"
         if writer is not None or user.username in self.logged_in_clients.keys():
             if writer is None:
                 writer = self.logged_in_clients[user.username][1]
             self._send_data(writer, data)
 
-    def init_db(self, db: DB):
+    def init_db(self, db: ZODB.DB) -> None:
+        """
+        Opens database connection and eventually creates nonexistent indexes.
+        """
         self.db = db
         self.connection = db.open()
         self.db_root = self.connection.root()
         if 'userdb' not in self.db_root.keys():
-            self.db_root['userdb'] = OOBTree()
+            self.db_root['userdb'] = BTrees.OOBTree.OOBTree()
         self.users = self.db_root['userdb']
 
         if 'biddb' not in self.db_root.keys():
-            self.db_root['biddb'] = OOBTree()
+            self.db_root['biddb'] = BTrees.OOBTree.OOBTree()
         self.bid_orders = self.db_root['biddb']
 
         if 'askdb' not in self.db_root.keys():
-            self.db_root['askdb'] = OOBTree()
+            self.db_root['askdb'] = BTrees.OOBTree.OOBTree()
         self.ask_orders = self.db_root['askdb']
 
-    def start(self, db=None, loop=None):
+    def start(self, db: ZODB.DB = None, loop: AbstractEventLoop = None) -> None:
+        """
+        Starts the exchange server.
+        If database and/or loop is not supplied, create default ones.
+        """
         if loop is None:
-            self.loop = asyncio.new_event_loop()
+            self.loop = new_event_loop()
         else:
             self.loop = loop
         if db is None:
-            storage = FileStorage.FileStorage('database.fs')
-            db = DB(storage)
+            storage = ZODB.FileStorage.FileStorage('database.fs')
+            db = ZODB.DB(storage)
         self.init_db(db)
         self.matching_engine = MatchingEngine(self.bid_orders, self.ask_orders, self)
 
-        handle_coro = asyncio.start_server(self._accept_connection, self.host, self.port, loop=self.loop)
+        handle_coro = start_server(self._accept_connection, self.host, self.port, loop=self.loop)
         self.server = self.loop.run_until_complete(handle_coro)
 
         print("Serving on {}".format(self.server.sockets[0].getsockname()))
@@ -162,7 +208,7 @@ class ExchangeServer:
         except KeyboardInterrupt:
             pass
 
-    def stop(self):
+    def stop(self) -> None:
         # TODO find a nicer solution
         try:
             if self.server is not None:
@@ -181,7 +227,7 @@ if __name__ == '__main__':
     port = int(sys.argv[2])
     db = None
     if len(sys.argv) >= 4 and sys.argv[3] == '--memory-db':
-        db = DB(None)
+        db = ZODB.DB(None)
 
     server = ExchangeServer(host, port)
     server.start(db)
