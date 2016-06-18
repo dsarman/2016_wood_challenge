@@ -47,12 +47,10 @@ class ExchangeServer:
         login_data = self._decode_msg(msg)
         user, login_response = self._login(login_data)
         self._send_data(writer, login_response)
-        print("After send user is {}".format(user))
         if user is None:
             writer.close()
         else:
             self.logged_in_clients[user.username] = (reader, writer)
-            print("Logged in clients: {}".format(self.logged_in_clients))
             await self._handle_client(reader, writer, user)
 
     async def _accept_public_connection(self, reader: StreamReader, writer: StreamWriter):
@@ -86,7 +84,6 @@ class ExchangeServer:
         Writer is passed along to allow reporting status to user without looking up
         his writer.
         """
-        print("Creating order")
         new_order = Order()
         new_order.set_user(user)
         new_order.set_price(decimal.Decimal(order_data['price']))
@@ -125,7 +122,6 @@ class ExchangeServer:
             user.set_username(username)
             user.set_password(password)
             self.users[username] = user
-            print("Creating new user: {}".format(user))
             transaction.commit()
         if password_matches:
             data['action'] = 'logged_in'
@@ -222,22 +218,15 @@ class ExchangeServer:
             pass
 
     def stop(self) -> None:
-        # TODO find a nicer solution
-        try:
-            if self.private_server is not None:
-                self.private_server.close()
-                self.loop.run_until_complete(self.private_server.wait_closed())
-                self.private_server = None
-            if self.public_server is not None:
-                self.public_server.close()
-                self.loop.run_until_complete(self.public_server.wait_closed())
-                self.public_server = None
-            self.loop.close()
-
-        except RuntimeError as e:
-            if str(e) != "Event loop is running.":
-                raise e
-
+        for server in (self.private_server, self.public_server):
+            if server is not None:
+                try:
+                    server.close()
+                    self.loop.run_until_complete(server.wait_closed())
+                # TODO find a nicer solution
+                except RuntimeError:
+                    pass
+        self.loop.close()
 
 if __name__ == '__main__':
     assert len(sys.argv) >= 4, 'Usage: server.py host private-port public-port'
