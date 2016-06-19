@@ -4,6 +4,7 @@ from environment import FakeClient
 
 loop = asyncio.new_event_loop()
 
+
 def create_client():
     # loop = asyncio.new_event_loop()
     client = FakeClient(loop)
@@ -19,10 +20,3 @@ def step_impl(context, username):
                  'username': username,
                  'password': 'pass'})
     client.blocking_recv()
-
-
-@given("client is instantiated")
-def step_impl(context):
-    client, loop = create_client()
-    context.client = client
-    context.client_loop = loop

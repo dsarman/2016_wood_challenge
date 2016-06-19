@@ -1,8 +1,6 @@
 Feature: User is registered/logged in upon connection
-  Background: context setup
-    Given client is instantiated
-
   @real_server
+  @fake_client
   Scenario: Register new user
     Given "username" and "password"
     When user connects
@@ -11,6 +9,7 @@ Feature: User is registered/logged in upon connection
     And new user is created
 
   @real_server
+  @fake_client
   Scenario: Login with existing user
     Given "username" and "password"
     When user connects
@@ -22,6 +21,7 @@ Feature: User is registered/logged in upon connection
     And user is logged in
 
   @real_server
+  @fake_client
   Scenario: Login with bad password
     Given "username" and "password"
     When user connects

@@ -24,7 +24,7 @@ def step_impl(context):
         order.set_quantity(quantity)
         order.set_price(price)
         context.usernames[username] = order
-        context.matching_engine.insert_order(order)
+        context.matching_engine.insert_order(order, None)
         context.matching_engine.process_order(order, None)
 
 
@@ -32,7 +32,7 @@ def step_impl(context):
 def step_impl(context, num):
     bids_count = len(context.matching_engine.bids.keys())
     asks_count = len(context.matching_engine.asks.keys())
-    assert_that(bids_count + asks_count, equal_to(int(num)), "Limit order book count")
+    assert_that(int(num), equal_to(bids_count + asks_count), "Limit order book count")
 
 
 @step('"{username}"\'s order quantity is "{quantity}"')
@@ -45,4 +45,4 @@ def step_impl(context, username, quantity):
         storage = context.matching_engine.asks
     for stored_order in storage[order.price]:
         if stored_order.id == order.id:
-            assert_that(stored_order.quantity, equal_to(int(quantity)))
+            assert_that(int(quantity), equal_to(stored_order.quantity))

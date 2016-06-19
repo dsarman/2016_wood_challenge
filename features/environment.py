@@ -6,7 +6,7 @@ import BTrees
 import BTrees.OOBTree
 import ZODB
 from typing import Dict, List
-
+from hamcrest import *
 from challenge.models import Order
 from challenge.server import ExchangeServer
 
@@ -89,6 +89,21 @@ def before_scenario(context, scenario):
         context.asks = BTrees.OOBTree.OOBTree()
         context.fake_server_output = []
         context.fake_server = FakeServer(context.fake_server_output)
+
+    if 'fake_client' in scenario.tags:
+        loop = asyncio.new_event_loop()
+        context.client = FakeClient(loop)
+
+    if 'logged_in' in scenario.tags:
+        context.client.blocking_connect()
+        context.client.send({'message': 'login',
+                      'username': 'user',
+                      'password': 'pass'})
+        data = context.client.blocking_recv()
+        assert_that(data, equal_to({
+            'type': 'login',
+            'action': 'registered'
+        }))
 
 
 def after_scenario(context, scenario):

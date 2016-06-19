@@ -67,3 +67,11 @@ Feature: Each order is matched upon receipt
       | tom | ask | 120 | 100 |
     Then limit order book has "1" orders
     And "tom"'s order quantity is "50"
+
+  @fake_server
+  Scenario: Match decimal values
+    Given orders data
+      | user | type | price | quantity |
+      | john | bid | 100.25 | 100 |
+      | mary | ask | 100.43 | 100 |
+    Then limit order book has "0" orders
