@@ -4,6 +4,7 @@ from persistent import Persistent
 from bcrypt import hashpw, gensalt
 from enum import Enum
 from decimal import Decimal
+from persistent.dict import PersistentDict
 
 
 def get_passw_hash(password, salt=gensalt()):
@@ -15,6 +16,7 @@ class User(Persistent):
         self.username = None  # type: str
         self.password = None  # type: bytes
         self.writer = None  # type: asyncio.StreamWriter
+        self.orders = PersistentDict()  # type: PersistentDict[int, Order]
 
     def set_username(self, username: str) -> None:
         self.username = username

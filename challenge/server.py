@@ -2,7 +2,7 @@
 
 from challenge.matching import MatchingEngine
 from challenge.models import User, Order, OrderType
-from typing import Dict
+from typing import Dict, Any
 from asyncio import StreamReader, StreamWriter, AbstractEventLoop, AbstractServer, new_event_loop, start_server
 import ZODB
 import ZODB.Connection
@@ -77,12 +77,20 @@ class ExchangeServer:
             if msg_type == 'createOrder':
                 self._create_order(writer, data, user)
             elif msg_type == 'cancelOrder':
-                raise NotImplementedError
+                self._delete_order(data, user)
             else:
                 raise ValueError("Message has to have a valid \'message\' field.")
 
             await writer.drain()
         del self.logged_in_clients[user.username]
+
+    def _delete_order(self, order_data: Dict[str, Any], user: User) -> None:
+        """
+        Deletes order with given order id.
+        """
+        order_id = order_data['orderId']
+        order = user.orders[order_id]
+        self.matching_engine.delete_order(order)
 
     def _create_order(self, writer: StreamWriter, order_data: Dict[str, str], user: User) -> None:
         """
@@ -103,7 +111,7 @@ class ExchangeServer:
         else:
             raise ValueError("Create order needs to have type \'BUY\' or \'SELL\'")
 
-        self.matching_engine.insert_order(new_order, writer)
+        self.matching_engine.insert_order(new_order, user, writer)
         self.matching_engine.process_order(new_order, writer)
 
     def _login(self, login_data: Dict[str, str]) -> (User, Dict[str, str]):

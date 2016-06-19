@@ -12,26 +12,25 @@ class MatchingEngine:
         self.asks = asks  # type: IOBTree
         self.server = server  # type: ExchangeServer
 
-    def insert_order(self, order, writer):
+    def insert_order(self, order, user, writer):
         storage = None
         if order.type == OrderType.bid:
             storage = self.bids
         elif order.type == OrderType.ask:
             storage = self.asks
-
         if order.price in storage.keys():
             storage[order.price].append(order)
         else:
             storage[order.price] = PersistentList([order])
+        user.orders[order.id] = order
         transaction.commit()
         self.server.send_data({'type': 'orderCreated',
                                'id': order.id}, user=None, writer=writer)
 
-    def _delete_order(self, order):
-        storage = None
+    def delete_order(self, order):
         if order.type == OrderType.bid:
             storage = self.bids
-        elif order.type == OrderType.ask:
+        else:
             storage = self.asks
         order_list = storage[order.price]
         order_list.remove(order)
@@ -52,12 +51,12 @@ class MatchingEngine:
         matched_whole = False
 
         if matched_amount == order1.quantity:
-            self._delete_order(order1)
+            self.delete_order(order1)
             matched_whole = True
         else:
             order1.decrease_quantity(matched_amount)
         if matched_amount == order2.quantity:
-            self._delete_order(order2)
+            self.delete_order(order2)
         else:
             order2.decrease_quantity(matched_amount)
         transaction.commit()
