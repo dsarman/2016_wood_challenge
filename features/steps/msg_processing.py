@@ -21,4 +21,4 @@ def step_impl(context, num):
         else:
             expected_i = start_i + i
         assert_that(reply, equal_to({'type': 'orderCreated',
-                     'id': expected_i}))
+                                     'id': expected_i}))

@@ -12,7 +12,7 @@ class MatchingEngine:
         self.asks = asks  # type: IOBTree
         self.server = server  # type: ExchangeServer
 
-    def insert_order(self, order):
+    def insert_order(self, order, writer):
         storage = None
         if order.type == OrderType.bid:
             storage = self.bids
@@ -24,6 +24,8 @@ class MatchingEngine:
         else:
             storage[order.price] = PersistentList([order])
         transaction.commit()
+        self.server.send_data({'type': 'orderCreated',
+                               'id': order.id}, user=None, writer=writer)
 
     def _delete_order(self, order):
         storage = None

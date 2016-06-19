@@ -16,6 +16,13 @@ import json
 import transaction
 
 
+counter = 0
+def get_new_id():
+    global counter
+    counter += 1
+    return counter
+
+
 class ExchangeServer:
     """
     Simple asyncio TCP server for one stock.
@@ -88,7 +95,7 @@ class ExchangeServer:
         new_order.set_user(user)
         new_order.set_price(decimal.Decimal(order_data['price']))
         new_order.set_quantity(int(order_data['quantity']))
-        new_order.set_id(int(order_data['orderId']))
+        new_order.set_id(get_new_id())
         if order_data['side'] == 'BUY':
             new_order.set_type(OrderType.ask)
         elif order_data['side'] == 'SELL':
@@ -96,7 +103,7 @@ class ExchangeServer:
         else:
             raise ValueError("Create order needs to have type \'BUY\' or \'SELL\'")
 
-        self.matching_engine.insert_order(new_order)
+        self.matching_engine.insert_order(new_order, writer)
         self.matching_engine.process_order(new_order, writer)
 
     def _login(self, login_data: Dict[str, str]) -> (User, Dict[str, str]):
@@ -227,6 +234,7 @@ class ExchangeServer:
                 except RuntimeError:
                     pass
         self.loop.close()
+
 
 if __name__ == '__main__':
     assert len(sys.argv) >= 4, 'Usage: server.py host private-port public-port'
