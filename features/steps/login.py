@@ -2,9 +2,6 @@ import transaction
 from behave import *
 from hamcrest import *
 
-# use_step_matcher("re")
-from challenge.models import User
-
 
 @given('"{username}" and "{password}"')
 def step_impl(context, username, password):
@@ -54,6 +51,7 @@ def step_impl(context):
         'type': 'login',
         'action': 'denied'
     }))
+
 
 @step("sends bad login data")
 def step_impl(context):

@@ -1,15 +1,26 @@
 import asyncio
 import json
 import threading
-
 import time
-
+import BTrees
+import BTrees.OOBTree
 import ZODB
+from typing import Dict, List
 
+from challenge.models import Order
 from challenge.server import ExchangeServer
 
 host = '127.0.0.1'
 port = 1234
+
+
+class FakeServer:
+    def __init__(self, output):
+        assert output is not None, "Output list needs to be provided."
+        self.output = output  # type: List[Dict]
+
+    def send_data(self, data, user, writer):
+        self.output.append(data)
 
 
 class FakeClient:
@@ -58,26 +69,33 @@ class FakeClient:
 
 
 def before_scenario(context, scenario):
-    context.server_loop = asyncio.new_event_loop()
-    context.db = ZODB.DB(None)
-    context.server = ExchangeServer(host, port, None, True)
-    context.server_thread = threading.Thread(
-        target=context.server.start,
-        args=(context.db, context.server_loop))
-    context.server_thread.start()
+    context.usernames = {}  # type: Dict[str, Order]
+    if 'real_server' in scenario.tags:
+        context.server_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(None)
+        context.db = ZODB.DB(None)
+        context.server = ExchangeServer(host, port, None, True)
+        context.server_thread = threading.Thread(
+            target=context.server.start,
+            args=(context.db, context.server_loop))
+        context.server_thread.start()
 
-    time.sleep(1)
+        time.sleep(1)
 
-    context.client_loop = asyncio.new_event_loop()
-    context.client = FakeClient(context.client_loop)
-
-    # context.db_connection = context.db.open()
-    # context.db_root = context.db_connection.root()
+        context.clients = {}  # type: Dict[str, (FakeClient, asyncio.AbstractEventLoop)]
+        context.received_datas = {}  # type: Dict[str, Dict]
+    elif 'fake_server' in scenario.tags:
+        context.bids = BTrees.OOBTree.OOBTree()
+        context.asks = BTrees.OOBTree.OOBTree()
+        context.fake_server_output = []
+        context.fake_server = FakeServer(context.fake_server_output)
 
 
 def after_scenario(context, scenario):
-    context.server_loop.call_soon_threadsafe(context.server.stop)
-    context.server_thread.join()
-    context.server_loop.close()
-    context.client.disconnect()
-    context.client_loop.close()
+    if 'real_server' in scenario.tags:
+        context.server_loop.call_soon_threadsafe(context.server.stop)
+        context.server_thread.join()
+        context.server_loop.close()
+        for client, loop in context.clients:
+            client.disconnect()
+            loop.close()
