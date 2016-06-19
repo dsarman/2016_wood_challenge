@@ -4,6 +4,7 @@ from decimal import Decimal
 from hamcrest import *
 from challenge.matching import MatchingEngine
 from challenge.models import Order, OrderType
+from challenge.server import get_new_id
 
 
 @given("orders data")
@@ -14,7 +15,7 @@ def step_impl(context):
         order_type = row['type'].upper()
         price = Decimal(row['price'])
         quantity = int(row['quantity'])
-        order_id = int(time.time() * 10) - 14617000000
+        order_id = get_new_id()
         order = Order()
         order.set_id(order_id)
         if order_type == 'BID':
@@ -32,7 +33,7 @@ def step_impl(context):
 def step_impl(context, num):
     bids_count = len(context.matching_engine.bids.keys())
     asks_count = len(context.matching_engine.asks.keys())
-    assert_that(int(num), equal_to(bids_count + asks_count), "Limit order book count")
+    assert_that(bids_count + asks_count, equal_to(int(num)), "Limit order book count")
 
 
 @step('"{username}"\'s order quantity is "{quantity}"')
@@ -45,4 +46,4 @@ def step_impl(context, username, quantity):
         storage = context.matching_engine.asks
     for stored_order in storage[order.price]:
         if stored_order.id == order.id:
-            assert_that(int(quantity), equal_to(stored_order.quantity))
+            assert_that(stored_order.quantity, equal_to(int(quantity)))
