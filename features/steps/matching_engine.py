@@ -3,12 +3,15 @@ from behave import *
 from decimal import Decimal
 from hamcrest import *
 from challenge.matching import MatchingEngine
-from challenge.models import Order, OrderType
+from challenge.models import Order, OrderType, User
 from challenge.server import get_new_id
 
 
 @given("orders data")
 def step_impl(context):
+    dummy_user = User()
+    dummy_user.set_password("pass")
+    dummy_user.set_username("user")
     for row in context.table:
         context.matching_engine = MatchingEngine(context.bids, context.asks, context.fake_server)
         username = row['user']
@@ -25,7 +28,7 @@ def step_impl(context):
         order.set_quantity(quantity)
         order.set_price(price)
         context.usernames[username] = order
-        context.matching_engine.insert_order(order, None)
+        context.matching_engine.insert_order(order, dummy_user, None)
         context.matching_engine.process_order(order, None)
 
 
