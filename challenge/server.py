@@ -1,9 +1,11 @@
 #!/usr/bin/env python3.5
+from logging import Logger
 
 from challenge.matching import MatchingEngine
 from challenge.models import User, Order, OrderType
 from typing import Dict, Any
 from asyncio import StreamReader, StreamWriter, AbstractEventLoop, AbstractServer, new_event_loop, start_server
+import logging
 import ZODB
 import ZODB.Connection
 import ZODB.FileStorage
@@ -44,6 +46,9 @@ class ExchangeServer:
         self.loop = None  # type: AbstractEventLoop
         self.logged_in_clients = {}  # type: Dict[str, (StreamReader, StreamWriter)]
         self.matching_engine = None  # type: MatchingEngine
+        self.log = logging.getLogger('ExchangeServer')  # type: Logger
+        if debug:
+            self.log.setLevel(logging.DEBUG)
 
     async def _accept_connection(self, reader: StreamReader, writer: StreamWriter) -> None:
         """
@@ -56,8 +61,10 @@ class ExchangeServer:
         self._send_data(writer, login_response)
         if user is None:
             writer.close()
+            self.log.debug("Client connection has been denied")
         else:
             self.logged_in_clients[user.username] = (reader, writer)
+            self.log.info("Client connected as \"{}\"".format(user.username))
             await self._handle_client(reader, writer, user)
 
     async def _accept_public_connection(self, reader: StreamReader, writer: StreamWriter):

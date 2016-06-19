@@ -1,8 +1,8 @@
 #!/usr/bin/env python3.5
+import logging
 import transaction
 from BTrees.IOBTree import IOBTree
 from persistent.list import PersistentList
-
 from challenge.models import OrderType
 
 
@@ -11,6 +11,7 @@ class MatchingEngine:
         self.bids = bids  # type: IOBTree
         self.asks = asks  # type: IOBTree
         self.server = server  # type: ExchangeServer
+        self.log = logging.getLogger('MatchingEngine')  # type: logging.Logger
 
     def insert_order(self, order, user, writer):
         storage = None
@@ -24,6 +25,7 @@ class MatchingEngine:
             storage[order.price] = PersistentList([order])
         user.orders[order.id] = order
         transaction.commit()
+        self.log.info("New order created \"{}\"".format(order))
         self.server.send_data({'type': 'orderCreated',
                                'id': order.id}, user=None, writer=writer)
 
@@ -37,6 +39,7 @@ class MatchingEngine:
         if len(order_list) == 0:
             del storage[order.price]
         transaction.commit()
+        self.log.info("Order \"{}\" was deleted.".format(order))
 
     def _send_report(self, amount, price, user=None, writer=None):
         data = {'type': 'trade',
@@ -60,6 +63,7 @@ class MatchingEngine:
         else:
             order2.decrease_quantity(matched_amount)
         transaction.commit()
+        self.log.info("Matched \"{}\" and \"{}\"".format(order1, order2))
 
         self._send_report(matched_amount, matched_price, None, writer1)
         self._send_report(matched_amount, matched_price, order2.user, None)
@@ -68,6 +72,7 @@ class MatchingEngine:
 
     def process_order(self, order, writer):
         matched = False
+        self.log.debug("Starting matching of \"{}\"".format(order))
         while not matched:
             storage = None
             try:
@@ -87,3 +92,5 @@ class MatchingEngine:
                 break
 
             matched = self._match_orders(order, matched_order, writer)
+
+        self.log.debug("Stopped matching of \"{}\"".format(order))
