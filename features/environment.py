@@ -22,6 +22,9 @@ class FakeServer:
     def send_data(self, data, user, writer):
         self.output.append(data)
 
+    def add_to_broadcast(self, data):
+        pass
+
 
 class FakeClient:
     def __init__(self, loop):

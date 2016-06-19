@@ -1,15 +1,16 @@
 #!/usr/bin/env python3.5
 import logging
 import transaction
-from BTrees.IOBTree import IOBTree
+from BTrees.OOBTree import OOBTree
 from persistent.list import PersistentList
 from challenge.models import OrderType
+from datetime import datetime
 
 
 class MatchingEngine:
     def __init__(self, bids, asks, server):
-        self.bids = bids  # type: IOBTree
-        self.asks = asks  # type: IOBTree
+        self.bids = bids  # type: OOBTree
+        self.asks = asks  # type: OOBTree
         self.server = server  # type: ExchangeServer
         self.log = logging.getLogger('MatchingEngine')  # type: logging.Logger
 
@@ -29,6 +30,9 @@ class MatchingEngine:
         self.server.send_data({'type': 'orderCreated',
                                'id': order.id}, user=None, writer=writer)
 
+        data = self._get_price_sum_dict(storage[order.price])
+        self.server.add_to_broadcast(data)
+
     def delete_order(self, order):
         if order.type == OrderType.bid:
             storage = self.bids
@@ -41,11 +45,50 @@ class MatchingEngine:
         transaction.commit()
         self.log.info("Order \"{}\" was deleted.".format(order))
 
-    def _send_report(self, amount, price, user=None, writer=None):
-        data = {'type': 'trade',
+        if order.price in storage.keys():
+            data = self._get_price_sum_dict(storage[order.price])
+        else:
+            side = self._get_opposite_side(order.type)
+            data = self._make_price_sum_dict(side, 0, 0)
+        self.server.add_to_broadcast(data)
+
+    @staticmethod
+    def _make_price_sum_dict(order_side, price, quantity):
+        return {'type': 'orderbook',
+                'side': order_side,
+                'price': price,
+                'quantity': quantity}
+
+    @staticmethod
+    def _get_opposite_side(order_type):
+        if order_type == OrderType.ask:
+            return OrderType.bid.name
+        else:
+            return OrderType.ask.name
+
+    @staticmethod
+    def _get_price_sum_dict(order_list):
+        if not order_list:
+            return None
+        sum_quantity = 0
+        price = order_list[0].price
+        order_side = MatchingEngine._get_opposite_side(order_list[0].type)
+        for order in order_list:
+            sum_quantity += order.quantity
+        return MatchingEngine._make_price_sum_dict(order_side,
+                                                   price,
+                                                   sum_quantity)
+
+    @staticmethod
+    def _get_exec_report_dict(amount, price):
+        return {'type': 'trade',
+                'time': datetime.now().time(),
                 'price': price,
                 'quantity': amount}
-        self.server.send_data(data, user, writer)
+
+    def _send_report(self, amount, price, user=None, writer=None):
+        self.server.send_data(self._get_exec_report_dict(amount, price),
+                              user, writer)
 
     def _match_orders(self, order1, order2, writer1):
         assert order1.type != order2.type, "Orders must have different types to be matched"
@@ -67,6 +110,18 @@ class MatchingEngine:
 
         self._send_report(matched_amount, matched_price, None, writer1)
         self._send_report(matched_amount, matched_price, order2.user, None)
+
+        if order1.type == OrderType.ask:
+            order_list1 = self.asks[order1.price]
+            order_list2 = self.bids[order2.price]
+        else:
+            order_list1 = self.bids[order1.price]
+            order_list2 = self.asks[order2.price]
+
+        data = self._get_price_sum_dict(order_list1)
+        self.server.add_to_bradcast(data)
+        data = self._get_price_sum_dict(order_list2)
+        self.server.add_to_bradcast(data)
 
         return matched_whole
 

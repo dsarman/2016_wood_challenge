@@ -1,10 +1,10 @@
 #!/usr/bin/env python3.5
 from logging import Logger
-
+from typing import List
 from challenge.matching import MatchingEngine
 from challenge.models import User, Order, OrderType
 from typing import Dict, Any
-from asyncio import StreamReader, StreamWriter, AbstractEventLoop, AbstractServer, new_event_loop, start_server
+from asyncio import StreamReader, StreamWriter, AbstractEventLoop, AbstractServer, new_event_loop, start_server, Queue
 import logging
 import ZODB
 import ZODB.Connection
@@ -44,13 +44,15 @@ class ExchangeServer:
         self.private_server = None  # type: AbstractServer
         self.public_server = None  # type: AbstractServer
         self.loop = None  # type: AbstractEventLoop
-        self.logged_in_clients = {}  # type: Dict[str, (StreamReader, StreamWriter)]
+        self.private_clients = {}  # type: Dict[str, (StreamReader, StreamWriter)]
+        self.public_clients = []  # type: List[StreamWriter]
         self.matching_engine = None  # type: MatchingEngine
+        self.broadcast_queue = None  # type: Queue
         self.log = logging.getLogger('ExchangeServer')  # type: Logger
         if debug:
             self.log.setLevel(logging.DEBUG)
 
-    async def _accept_connection(self, reader: StreamReader, writer: StreamWriter) -> None:
+    async def _accept_private_connection(self, reader: StreamReader, writer: StreamWriter) -> None:
         """
         Coroutine that accepts incoming client connections, launches the login process
         and message handling coroutine.
@@ -63,12 +65,26 @@ class ExchangeServer:
             writer.close()
             self.log.debug("Client connection has been denied")
         else:
-            self.logged_in_clients[user.username] = (reader, writer)
+            self.private_clients[user.username] = (reader, writer)
             self.log.info("Client connected as \"{}\"".format(user.username))
             await self._handle_client(reader, writer, user)
 
-    async def _accept_public_connection(self, reader: StreamReader, writer: StreamWriter):
-        pass
+    async def _accept_public_connection(self, _, writer: StreamWriter):
+        """
+        Accepts incoming connection from public client and ads it to notification list.
+        """
+        self.public_clients.append(writer)
+
+    def add_to_broadcast(self, data: Dict[str, Any]):
+        if data is not None:
+            self.broadcast_queue.put(data)
+
+    async def _broadcast_public(self):
+        while True:
+            data = await self.broadcast_queue.get()
+            for writer in self.public_clients:
+                self._send_data(writer, data)
+                await writer.drain()
 
     async def _handle_client(self, reader: StreamReader, writer: StreamWriter, user: User) -> None:
         """
@@ -89,7 +105,7 @@ class ExchangeServer:
                 raise ValueError("Message has to have a valid \'message\' field.")
 
             await writer.drain()
-        del self.logged_in_clients[user.username]
+        del self.private_clients[user.username]
 
     def _delete_order(self, order_data: Dict[str, Any], user: User) -> None:
         """
@@ -108,7 +124,8 @@ class ExchangeServer:
         """
         new_order = Order()
         new_order.set_user(user)
-        new_order.set_price(decimal.Decimal(order_data['price']))
+        #new_order.set_price(decimal.Decimal(order_data['price']))
+        new_order.set_price(int(order_data['price']))
         new_order.set_quantity(int(order_data['quantity']))
         new_order.set_id(get_new_id())
         if order_data['side'] == 'BUY':
@@ -135,7 +152,6 @@ class ExchangeServer:
         username = login_data['username']
         password = login_data['password']
         password_matches = None
-        user = None
         if username in self.users.keys():
             user = self.users[username]
             password_matches = user.check_password(password)
@@ -184,9 +200,9 @@ class ExchangeServer:
         Send supplied data using this writer.
         """
         assert user is not None or writer is not None, "You must supply user or writer"
-        if writer is not None or user.username in self.logged_in_clients.keys():
+        if writer is not None or user.username in self.private_clients.keys():
             if writer is None:
-                writer = self.logged_in_clients[user.username][1]
+                writer = self.private_clients[user.username][1]
             self._send_data(writer, data)
 
     def init_db(self, db: ZODB.DB) -> None:
@@ -217,6 +233,8 @@ class ExchangeServer:
             self.loop = new_event_loop()
         else:
             self.loop = loop
+        self.broadcast_queue = Queue(loop=self.loop)
+
         if db is None:
             storage = ZODB.FileStorage.FileStorage('database.fs')
             db = ZODB.DB(storage)
@@ -224,7 +242,7 @@ class ExchangeServer:
         self.matching_engine = MatchingEngine(self.bid_orders, self.ask_orders, self)
 
         if self.private_port is not None:
-            private_handle_coro = start_server(self._accept_connection, self.host, self.private_port,
+            private_handle_coro = start_server(self._accept_private_connection, self.host, self.private_port,
                                                loop=self.loop, reuse_address=True)
             self.private_server = self.loop.run_until_complete(private_handle_coro)
             print("Serving private on {}".format(self.private_server.sockets[0].getsockname()))
