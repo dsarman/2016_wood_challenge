@@ -69,13 +69,19 @@ class MatchingEngine:
         matched = False
         while not matched:
             storage = None
-            if order.type == OrderType.bid:
-                storage = self.asks
-            elif order.type == OrderType.ask:
-                storage = self.bids
             try:
-                max_key = storage.maxKey(order.price)
-                matched_order = storage[max_key][0]
+                extreme_key = None
+                if order.type == OrderType.bid:
+                    storage = self.asks
+                    extreme_key = self.asks.maxKey()
+                    if extreme_key < order.price:
+                        break
+                elif order.type == OrderType.ask:
+                    storage = self.bids
+                    extreme_key = self.bids.minKey()
+                    if extreme_key > order.price:
+                        break
+                matched_order = storage[extreme_key][0]
             except ValueError:
                 break
 
