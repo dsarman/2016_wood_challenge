@@ -13,7 +13,7 @@ def step_impl(context):
     dummy_user.set_password("pass")
     dummy_user.set_username("user")
     for row in context.table:
-        context.matching_engine = MatchingEngine(context.bids, context.asks, context.fake_server)
+        context.matching_engine = MatchingEngine(context.bids, context.asks, context.server)
         username = row['user']
         order_type = row['type'].upper()
         price = Decimal(row['price'])

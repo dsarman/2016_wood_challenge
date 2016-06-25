@@ -5,9 +5,7 @@
 # Usage: client-datastream.py DataChannelHostname DataChannelPort
 #
 # http://codingchallenge.wood.cz/
-
-
-
+import decimal
 from typing import Any, Dict
 import asyncio
 import datetime
@@ -52,16 +50,16 @@ class MarketModel:
         elif message['type'] == 'orderbook':
             assert message['side'] in {'bid', 'ask'}, 'Invalid order book side'
             side = self._bid if message['side'] == 'bid' else self._ask
-            side[message['price']] = message['quantity']
+            side[decimal.Decimal(message['price'])] = message['quantity']
         else:
             raise ValueError('Invalid message type')
 
     def __repr__(self) -> str:
         lines = (
-            ['BID'] + ['{:d} @ {:d}'.format(qty, price) for (price, qty) in reversed(sorted(self._bid.items())) if
+            ['BID'] + ['{:d} @ {}'.format(qty, price) for (price, qty) in reversed(sorted(self._bid.items())) if
                        qty] +
-            ['ASK'] + ['{:d} @ {:d}'.format(qty, price) for (price, qty) in sorted(self._ask.items()) if qty] +
-            ['TRADES'] + ['{time:%Y-%m-%d %H:%M:%S.%s} - {quantity:d} @ {price:d}'.format(**trade) for trade in
+            ['ASK'] + ['{:d} @ {}'.format(qty, price) for (price, qty) in sorted(self._ask.items()) if qty] +
+            ['TRADES'] + ['{time:%Y-%m-%d %H:%M:%S.%s} - {quantity:d} @ {price}'.format(**trade) for trade in
                           self._trades]
         )
         return '\n'.join(lines)

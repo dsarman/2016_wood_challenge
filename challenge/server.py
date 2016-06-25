@@ -69,15 +69,22 @@ class ExchangeServer:
             self.log.info("Client connected as \"{}\"".format(user.username))
             await self._handle_client(reader, writer, user)
 
-    async def _accept_public_connection(self, _, writer: StreamWriter):
+    async def _accept_public_connection(self, reader: StreamReader, writer: StreamWriter):
         """
         Accepts incoming connection from public client and ads it to notification list.
         """
         self.public_clients.append(writer)
+        await self._broadcast_orderbook(writer)
 
     def add_to_broadcast(self, data: Dict[str, Any]):
         if data is not None:
             self.broadcast_queue.put(data)
+
+    async def _broadcast_orderbook(self, writer):
+        for storage in (self.bid_orders, self.ask_orders):
+            for order_list in storage.values():
+                data = self.matching_engine._get_price_sum_dict(order_list)
+                self._send_data(writer, data)
 
     async def _broadcast_public(self):
         while True:
@@ -124,8 +131,7 @@ class ExchangeServer:
         """
         new_order = Order()
         new_order.set_user(user)
-        #new_order.set_price(decimal.Decimal(order_data['price']))
-        new_order.set_price(int(order_data['price']))
+        new_order.set_price(decimal.Decimal(order_data['price']))
         new_order.set_quantity(int(order_data['quantity']))
         new_order.set_id(get_new_id())
         if order_data['side'] == 'BUY':
@@ -253,7 +259,8 @@ class ExchangeServer:
             print("Serving public on {}".format(self.public_server.sockets[0].getsockname()))
 
         try:
-            self.loop.run_forever()
+            self.loop.run_until_complete(self._broadcast_public())
+            #self.loop.run_forever()
         except KeyboardInterrupt:
             pass
 
@@ -263,7 +270,7 @@ class ExchangeServer:
                 try:
                     server.close()
                     self.loop.run_until_complete(server.wait_closed())
-                # TODO find a nicer solution
+                # TODO fix server not shutting down without exception in tests
                 except RuntimeError:
                     pass
         self.loop.close()
@@ -275,8 +282,11 @@ if __name__ == '__main__':
     private_port = int(sys.argv[2])
     public_port = int(sys.argv[3])
     db = None
+    debug = False
     if len(sys.argv) >= 5 and sys.argv[4] == '--memory-db':
         db = ZODB.DB(None)
+    if len(sys.argv) >= 6 and sys.argv[5] == '--debug':
+        debug = True
 
-    server = ExchangeServer(host, private_port, public_port)
+    server = ExchangeServer(host, private_port, public_port, debug)
     server.start(db)

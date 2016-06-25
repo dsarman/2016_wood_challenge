@@ -49,7 +49,7 @@ class MatchingEngine:
             data = self._get_price_sum_dict(storage[order.price])
         else:
             side = self._get_opposite_side(order.type)
-            data = self._make_price_sum_dict(side, 0, 0)
+            data = self._make_price_sum_dict(side, order.price, 0)
         self.server.add_to_broadcast(data)
 
     @staticmethod
@@ -82,7 +82,7 @@ class MatchingEngine:
     @staticmethod
     def _get_exec_report_dict(amount, price):
         return {'type': 'trade',
-                'time': datetime.now().time(),
+                'time': datetime.now().timestamp(),
                 'price': price,
                 'quantity': amount}
 
@@ -112,40 +112,45 @@ class MatchingEngine:
         self._send_report(matched_amount, matched_price, order2.user, None)
 
         if order1.type == OrderType.ask:
-            order_list1 = self.asks[order1.price]
-            order_list2 = self.bids[order2.price]
+            order_list2 = self.bids.get(order2.price, None)
         else:
-            order_list1 = self.bids[order1.price]
-            order_list2 = self.asks[order2.price]
+            order_list2 = self.asks.get(order2.price, None)
 
-        data = self._get_price_sum_dict(order_list1)
-        self.server.add_to_bradcast(data)
+        data = self._get_exec_report_dict(matched_amount, matched_price)
+        self.server.add_to_broadcast(data)
         data = self._get_price_sum_dict(order_list2)
-        self.server.add_to_bradcast(data)
+        self.server.add_to_broadcast(data)
 
         return matched_whole
 
     def process_order(self, order, writer):
-        matched = False
-        self.log.debug("Starting matching of \"{}\"".format(order))
-        while not matched:
-            storage = None
-            try:
-                extreme_key = None
-                if order.type == OrderType.bid:
-                    storage = self.asks
-                    extreme_key = self.asks.maxKey()
-                    if extreme_key < order.price:
+        def matching_loop(storage, extreme_key_func, compare_check_func):
+            matched_whole = False
+            while not matched_whole:
+                try:
+                    extreme_key = extreme_key_func()
+                    if compare_check_func(extreme_key, order.price):
                         break
-                elif order.type == OrderType.ask:
-                    storage = self.bids
-                    extreme_key = self.bids.minKey()
-                    if extreme_key > order.price:
-                        break
-                matched_order = storage[extreme_key][0]
-            except ValueError:
-                break
+                    matched_order = storage[extreme_key][0]
+                except ValueError:
+                    break
+                matched_whole = self._match_orders(order, matched_order, writer)
+            return matched_whole
 
-            matched = self._match_orders(order, matched_order, writer)
+        self.log.debug("Starting matching of \"{}\"".format(order))
+        if order.type == OrderType.bid:
+            matched_storage = self.asks
+            original_storage = self.bids
+            extreme_key_func = self.asks.maxKey
+            matched_whole = matching_loop(matched_storage, extreme_key_func, lambda x, y: x < y)
+        else:
+            matched_storage = self.bids
+            original_storage = self.asks
+            extreme_key_func = self.bids.minKey
+            matched_whole = matching_loop(matched_storage, extreme_key_func, lambda x, y: x > y)
+
+        if not matched_whole:
+            data = self._get_price_sum_dict(original_storage[order.price])
+            self.server.add_to_broadcast(data)
 
         self.log.debug("Stopped matching of \"{}\"".format(order))

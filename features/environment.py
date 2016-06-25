@@ -73,25 +73,30 @@ class FakeClient:
 
 def before_scenario(context, scenario):
     context.usernames = {}  # type: Dict[str, Order]
-    if 'real_server' in scenario.tags:
+    def setup_real_server(private_port, public_port):
         context.server_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(None)
         context.db = ZODB.DB(None)
-        context.server = ExchangeServer(host, port, None, True)
+        context.server = ExchangeServer(host, private_port, public_port, True)
         context.server_thread = threading.Thread(
             target=context.server.start,
             args=(context.db, context.server_loop))
         context.server_thread.start()
-
         time.sleep(1)
-
         context.clients = {}  # type: Dict[str, (FakeClient, asyncio.AbstractEventLoop)]
         context.received_datas = {}  # type: Dict[str, Dict]
+
+    if 'real_server' in scenario.tags:
+        setup_real_server(port, None)
+
+    elif 'public_server' in scenario.tags:
+        setup_real_server(None, port)
+
     elif 'fake_server' in scenario.tags:
         context.bids = BTrees.OOBTree.OOBTree()
         context.asks = BTrees.OOBTree.OOBTree()
-        context.fake_server_output = []
-        context.fake_server = FakeServer(context.fake_server_output)
+        context.server_output = []
+        context.server = FakeServer(context.server_output)
 
     if 'fake_client' in scenario.tags:
         loop = asyncio.new_event_loop()

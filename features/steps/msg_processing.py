@@ -1,3 +1,5 @@
+import decimal
+
 from behave import *
 from hamcrest import *
 
@@ -8,7 +10,7 @@ def step_impl(context):
                          'side': 'BUY',
                          'price': 100,
                          'quantity': 100})
-    context.price = 100
+    context.price = decimal.Decimal(100)
     context.quantity = 100
 
 
