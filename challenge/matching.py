@@ -1,20 +1,34 @@
 #!/usr/bin/env python3.5
 import logging
+import asyncio
+from typing import Dict, Any, List
+
 import transaction
 from BTrees.OOBTree import OOBTree
+from decimal import Decimal
 from persistent.list import PersistentList
-from challenge.models import OrderType
+from challenge.models import OrderType, Order, User
 from datetime import datetime
 
 
 class MatchingEngine:
-    def __init__(self, bids, asks, server):
+    """
+    Class which manages work with the DB and orderbook, and also does matching new orders.
+    """
+    def __init__(self, bids: OOBTree, asks: OOBTree, server):
         self.bids = bids  # type: OOBTree
         self.asks = asks  # type: OOBTree
         self.server = server  # type: ExchangeServer
         self.log = logging.getLogger('MatchingEngine')  # type: logging.Logger
 
-    def insert_order(self, order, user, writer):
+    def insert_order(self, order: Order, user: User, writer: asyncio.StreamWriter) -> None:
+        """
+        Inserts given order into the orderbook and DB.
+
+        :param order: Order to be inserted into DB.
+        :param user: User inserting the order.
+        :param writer: Writer associated with the user, used to notify him of results (eg. id of newly created order).
+        """
         storage = None
         if order.type == OrderType.bid:
             storage = self.bids
@@ -33,7 +47,12 @@ class MatchingEngine:
         data = self.get_price_sum_dict(storage[order.price])
         self.server.add_to_broadcast(data)
 
-    def delete_order(self, order):
+    def delete_order(self, order: Order) -> None:
+        """
+        Deletes given order from orderbook and DB.
+
+        :param order: Order to be deleted
+        """
         if order.type == OrderType.bid:
             storage = self.bids
         else:
@@ -53,21 +72,45 @@ class MatchingEngine:
         self.server.add_to_broadcast(data)
 
     @staticmethod
-    def _make_price_sum_dict(order_side, price, quantity):
+    def _make_price_sum_dict(order_side: str, price: Decimal, quantity: int) -> Dict[str, Any]:
+        """
+        Returns message dictionary for one orderbook entry with given parameters.
+
+        :param order_side: Entry side (bid/ask).
+        :param price: Price of orders.
+        :param quantity: Sum of quantity of all orders with the same given price.
+        :return: Dictionary representing message to be sent to client.
+        """
         return {'type': 'orderbook',
                 'side': order_side,
                 'price': price,
                 'quantity': quantity}
 
     @staticmethod
-    def _get_opposite_side(order_type):
+    def _get_opposite_side(order_type: OrderType) -> str:
+        """
+        Returns opposite order sides name.
+        Used because in internal representation order are stored according to their type.
+        For example sell order has type *bid*, and is stored under bids internaly.
+        Example in the challenge assignment displays Sell orders under Ask
+        (as in orders we can use to match when new Ask order is created) and vice versa.
+
+        :param order_type: Type of order we want to get opposite to.
+        :return: Name of opposite type as string.
+        """
         if order_type == OrderType.ask:
             return OrderType.bid.name
         else:
             return OrderType.ask.name
 
     @staticmethod
-    def get_price_sum_dict(order_list):
+    def get_price_sum_dict(order_list: List[Order]) -> Dict[str, Any]:
+        """
+        Sums all orders with the same price and returns message representing this public orderbook entry.
+
+        :param order_list: List of orders to sum
+        :return: Dictionary representing message to be sent to user.
+        """
         if not order_list:
             return None
         sum_quantity = 0
@@ -80,17 +123,30 @@ class MatchingEngine:
                                                    sum_quantity)
 
     @staticmethod
-    def _get_exec_report_dict(amount, price):
+    def _get_exec_report_dict(amount: int, price: Decimal) -> Dict[str, Any]:
+        """
+        Return dictionary representing message with trade information.
+
+        :param amount: Amount that was traded.
+        :param price: At which the trade happened.
+        :return: Dictionary representing message to be sent to user.
+        """
         return {'type': 'trade',
                 'time': datetime.now().timestamp(),
                 'price': price,
                 'quantity': amount}
 
-    def _send_report(self, amount, price, user=None, writer=None):
-        self.server.send_data(self._get_exec_report_dict(amount, price),
-                              user, writer)
+    def _match_orders(self, order1: Order, order2: Order, writer1: asyncio.StreamWriter) -> bool:
+        """
+        Matches given orders against each other, updates the values in DB,
+        sends notification to users about the trade.
 
-    def _match_orders(self, order1, order2, writer1):
+        :param order1: New order which we are matching.
+        :param order2: Existing order from orderbook which we are matching against.
+        :param writer1: Writer of user who placed the new order.
+            Used for sending of notification without having to search for the users writer.
+        :return: True if the new order was matched whole, False if some quantity remains.
+        """
         assert order1.type != order2.type, "Orders must have different types to be matched"
         matched_amount = min(order1.quantity, order2.quantity)
         matched_price = order2.price
@@ -108,8 +164,9 @@ class MatchingEngine:
         transaction.commit()
         self.log.info("Matched \"{}\" and \"{}\"".format(order1, order2))
 
-        self._send_report(matched_amount, matched_price, None, writer1)
-        self._send_report(matched_amount, matched_price, order2.user, None)
+        report = self._get_exec_report_dict(matched_amount, matched_price)
+        self.server.send_data(report, None, writer1)
+        self.server.send_data(report, order2.user, None)
 
         if order1.type == OrderType.ask:
             order_list2 = self.bids.get(order2.price, None)
@@ -123,7 +180,14 @@ class MatchingEngine:
 
         return matched_whole
 
-    def process_order(self, order, writer):
+    def process_order(self, order: Order, writer: asyncio.StreamWriter) -> None:
+        """
+        Tries to match given order against existing order, either until it is filled completely,
+        or there is no suitable order to be matched against.
+
+        :param order: New order to be matched.
+        :param writer: Writer of the user who placed the new order.
+        """
         def matching_loop(storage, extreme_key_func, compare_check_func):
             matched_whole = False
             while not matched_whole:

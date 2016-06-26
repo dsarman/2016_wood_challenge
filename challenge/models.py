@@ -1,5 +1,6 @@
 #!/usr/bin/env python3.5
 import asyncio
+from uuid import UUID
 from persistent import Persistent
 from bcrypt import hashpw, gensalt
 from enum import Enum
@@ -39,7 +40,7 @@ class Order(Persistent):
         self.user = None  # type: User
         self.price = None  # type: Decimal
         self.quantity = None  # type: int
-        self.id = None  # type: int
+        self.id = None  # type: UUID
 
     def set_type(self, order_type: OrderType):
         self.type = order_type

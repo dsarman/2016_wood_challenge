@@ -1,4 +1,5 @@
 #!/usr/bin/env python3.5
+import uuid
 from logging import Logger
 from typing import List
 from challenge.matching import MatchingEngine
@@ -16,12 +17,6 @@ import BTrees.OOBTree
 import sys
 import json
 import transaction
-
-counter = 0
-def get_new_id():
-    global counter
-    counter += 1
-    return counter
 
 
 class ExchangeServer:
@@ -47,6 +42,7 @@ class ExchangeServer:
         self.public_clients = []  # type: List[StreamWriter]
         self.matching_engine = None  # type: MatchingEngine
         self.broadcast_queue = None  # type: Queue
+        self.id_counter = 0  # type: int
         self.log = logging.getLogger('ExchangeServer')  # type: Logger
         if debug:
             self.log.setLevel(logging.DEBUG)
@@ -55,6 +51,9 @@ class ExchangeServer:
         """
         Coroutine that accepts incoming client connections, launches the login process
         and message handling coroutine.
+
+        :param reader: Connected clients Reader.
+        :param writer: Connected clients Writer.
         """
         msg = await reader.readline()
         login_data = self._decode_msg(msg)
@@ -68,33 +67,40 @@ class ExchangeServer:
             self.log.info("Client connected as \"{}\"".format(user.username))
             await self._handle_client(reader, writer, user)
 
-    async def _accept_public_connection(self, _, writer: StreamWriter):
+    async def _accept_public_connection(self, _, writer: StreamWriter) -> None:
         """
         Accepts incoming connection from public client and ads it to notification list.
+
+        :param _: Clients Reader. Not needed since public clients only consume data.
+        :param writer: Clients Writer.
         """
         self.public_clients.append(writer)
         await self._broadcast_orderbook(writer)
 
     def add_to_broadcast(self, data: Dict[str, Any]) -> None:
         """
-        Adds given data to Queue for public publishing.
+        Adds data to Queue for public broadcasting.
+
+        :param data: Data to be broadcasted.
         """
         if data is not None:
             self.broadcast_queue.put(data)
 
-    async def _broadcast_orderbook(self, writer):
+    async def _broadcast_orderbook(self, writer: StreamWriter) -> None:
         """
-        Sends orderbook data to writer, each price and its quantity as separate message.
+        Coroutine that sends orderbook data to writer, each price and its quantity as separate message.
+
+        :param writer: Writer used for sending data.
         """
         for storage in (self.bid_orders, self.ask_orders):
             for order_list in storage.values():
                 data = self.matching_engine.get_price_sum_dict(order_list)
                 self._send_data(writer, data)
 
-    async def _broadcast_public(self):
+    async def _broadcast_public(self) -> None:
         """
         Coroutine which takes data to be broadcasted from queue, and sends it to all
-        connected clients.
+        connected public clients.
         """
         while True:
             data = await self.broadcast_queue.get()
@@ -106,6 +112,10 @@ class ExchangeServer:
         """
         Coroutine which loops over the received lines and launches corresponding action.
         Does the main work with handling private client messages.
+
+        :param reader: Clients reader.
+        :param writer: Clients writer.
+        :param user: User under which the client is logged in.
         """
         while True:
             msg = await reader.readline()
@@ -126,23 +136,28 @@ class ExchangeServer:
     def _delete_order(self, order_data: Dict[str, Any], user: User) -> None:
         """
         Deletes order with given order id.
+
+        :param order_data: Dictionary containing order id data.
+        :param user: User whose order we want to delete.
         """
         order_id = order_data['orderId']
         order = user.orders[order_id]
         self.matching_engine.delete_order(order)
 
-    def _create_order(self, writer: StreamWriter, order_data: Dict[str, str], user: User) -> None:
+    def _create_order(self, writer: StreamWriter, order_data: Dict[str, Any], user: User) -> None:
         """
         Create new order from user using order data.
+        Writer is passed along to allow reporting status to user without looking up his writer.
 
-        Writer is passed along to allow reporting status to user without looking up
-        his writer.
+        :param writer: Writer of the client who created the order.
+        :param order_data: Dictionary with orders data.
+        :param user: User who created the order.
         """
         new_order = Order()
         new_order.set_user(user)
         new_order.set_price(decimal.Decimal(order_data['price']))
         new_order.set_quantity(int(order_data['quantity']))
-        new_order.set_id(get_new_id())
+        new_order.set_id(uuid.uuid4())
         if order_data['side'] == 'BUY':
             new_order.set_type(OrderType.ask)
         elif order_data['side'] == 'SELL':
@@ -153,12 +168,13 @@ class ExchangeServer:
         self.matching_engine.insert_order(new_order, user, writer)
         self.matching_engine.process_order(new_order, writer)
 
-    def _login(self, login_data: Dict[str, str]) -> (User, Dict[str, str]):
+    def _login(self, login_data: Dict[str, Any]) -> (User, Dict[str, Any]):
         """
-        Handles client login after connecting.
+        Tries to log in given supplied login data.
 
-        If the supplied username exist, try to log into it using supplied password,
-        if the username is new, register it with supplied password.
+        :param login_data: Data containing user login info.
+        :return: Tipple containing corresponding user, and response to be sent to user if the loggin was successful.
+            If the loggin was not successful, first return value is None, second message to user.
         """
         data = {'type': 'login'}
         if 'message' not in login_data or login_data['message'] != 'login':
@@ -187,11 +203,13 @@ class ExchangeServer:
             return None, data
 
     @staticmethod
-    def _send_data(writer: StreamWriter, data: Dict[str, str]) -> None:
+    def _send_data(writer: StreamWriter, data: Dict[str, Any]) -> None:
         """
         Sends data using supplied writer.
-        """
 
+        :param writer: Writer used for sending data.
+        :param data: Dictionary of data to be sent.
+        """
         def decimal_decode(obj):
             if isinstance(obj, decimal.Decimal):
                 return str(obj)
@@ -200,9 +218,12 @@ class ExchangeServer:
         writer.write(msg)
 
     @staticmethod
-    def _decode_msg(msg: bytes) -> Dict[str, str]:
+    def _decode_msg(msg: bytes) -> Dict[str, Any]:
         """
-        Decodes message from string to json.
+        Decodes message from json string to python dictionary.
+
+        :param msg: Raw message to be decoded.
+        :return: Dictionary representing parsed json.
         """
         assert msg is not None, "Cannot decode empty message"
         msg = msg.decode('utf-8').rstrip('\n')
@@ -210,9 +231,12 @@ class ExchangeServer:
 
     def send_data(self, data: Dict[str, str], user: User = None, writer: StreamWriter = None) -> None:
         """
-        If no writer is supplied, retrieve it for the supplied user,
-        otherwise use supplied one.
-        Send supplied data using this writer.
+        Sends data using supplied writer.
+        If no writer is supplied, retrieve it for the supplied user.
+
+        :param data: Data to be sent
+        :param user: User which is recipient of the data.
+        :param writer: Writer used to send the data.
         """
         assert user is not None or writer is not None, "You must supply user or writer"
         if writer is not None or user.username in self.private_clients.keys():
@@ -220,9 +244,20 @@ class ExchangeServer:
                 writer = self.private_clients[user.username][1]
             self._send_data(writer, data)
 
+    def get_new_id(self):
+        """
+        Simple function used to generate new ids for orders
+
+        :return: New Id.
+        """
+        self.id_counter += 1
+        return self.id_counter
+
     def init_db(self, db: ZODB.DB) -> None:
         """
         Opens database connection and eventually creates nonexistent indexes.
+
+        :param db: DB to be opened.
         """
         self.db = db
         self.connection = db.open()
@@ -239,10 +274,17 @@ class ExchangeServer:
             self.db_root['askdb'] = BTrees.OOBTree.OOBTree()
         self.ask_orders = self.db_root['askdb']
 
+        if 'maxcounter' not in self.db_root.keys():
+            self.db_root['maxcounter'] = 0
+        self.id_counter = self.db_root['maxcounter']
+
     def start(self, db: ZODB.DB = None, loop: AbstractEventLoop = None) -> None:
         """
         Starts the exchange server.
         If database and/or loop is not supplied, create default ones.
+
+        :param db: DB used in the server.
+        :param loop: asyncio loop used in the server.
         """
         if loop is None:
             self.loop = new_event_loop()
@@ -273,6 +315,10 @@ class ExchangeServer:
             pass
 
     def stop(self) -> None:
+        """
+        Stops the running server (both public and private).
+        *NOTE*: Currently does not function correctly, constantly throws RuntimeError.
+        """
         for server in (self.private_server, self.public_server):
             if server is not None:
                 try:

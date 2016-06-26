@@ -1,10 +1,9 @@
-import time
+import uuid
 from behave import *
 from decimal import Decimal
 from hamcrest import *
 from challenge.matching import MatchingEngine
 from challenge.models import Order, OrderType, User
-from challenge.server import get_new_id
 
 
 @given("orders data")
@@ -18,7 +17,7 @@ def step_impl(context):
         order_type = row['type'].upper()
         price = Decimal(row['price'])
         quantity = int(row['quantity'])
-        order_id = get_new_id()
+        order_id = uuid.uuid4()
         order = Order()
         order.set_id(order_id)
         if order_type == 'BID':
