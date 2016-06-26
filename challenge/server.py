@@ -17,7 +17,6 @@ import sys
 import json
 import transaction
 
-
 counter = 0
 def get_new_id():
     global counter
@@ -69,24 +68,34 @@ class ExchangeServer:
             self.log.info("Client connected as \"{}\"".format(user.username))
             await self._handle_client(reader, writer, user)
 
-    async def _accept_public_connection(self, reader: StreamReader, writer: StreamWriter):
+    async def _accept_public_connection(self, _, writer: StreamWriter):
         """
         Accepts incoming connection from public client and ads it to notification list.
         """
         self.public_clients.append(writer)
         await self._broadcast_orderbook(writer)
 
-    def add_to_broadcast(self, data: Dict[str, Any]):
+    def add_to_broadcast(self, data: Dict[str, Any]) -> None:
+        """
+        Adds given data to Queue for public publishing.
+        """
         if data is not None:
             self.broadcast_queue.put(data)
 
     async def _broadcast_orderbook(self, writer):
+        """
+        Sends orderbook data to writer, each price and its quantity as separate message.
+        """
         for storage in (self.bid_orders, self.ask_orders):
             for order_list in storage.values():
-                data = self.matching_engine._get_price_sum_dict(order_list)
+                data = self.matching_engine.get_price_sum_dict(order_list)
                 self._send_data(writer, data)
 
     async def _broadcast_public(self):
+        """
+        Coroutine which takes data to be broadcasted from queue, and sends it to all
+        connected clients.
+        """
         while True:
             data = await self.broadcast_queue.get()
             for writer in self.public_clients:
@@ -260,7 +269,6 @@ class ExchangeServer:
 
         try:
             self.loop.run_until_complete(self._broadcast_public())
-            #self.loop.run_forever()
         except KeyboardInterrupt:
             pass
 

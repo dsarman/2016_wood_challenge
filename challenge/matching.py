@@ -30,7 +30,7 @@ class MatchingEngine:
         self.server.send_data({'type': 'orderCreated',
                                'id': order.id}, user=None, writer=writer)
 
-        data = self._get_price_sum_dict(storage[order.price])
+        data = self.get_price_sum_dict(storage[order.price])
         self.server.add_to_broadcast(data)
 
     def delete_order(self, order):
@@ -46,7 +46,7 @@ class MatchingEngine:
         self.log.info("Order \"{}\" was deleted.".format(order))
 
         if order.price in storage.keys():
-            data = self._get_price_sum_dict(storage[order.price])
+            data = self.get_price_sum_dict(storage[order.price])
         else:
             side = self._get_opposite_side(order.type)
             data = self._make_price_sum_dict(side, order.price, 0)
@@ -67,7 +67,7 @@ class MatchingEngine:
             return OrderType.ask.name
 
     @staticmethod
-    def _get_price_sum_dict(order_list):
+    def get_price_sum_dict(order_list):
         if not order_list:
             return None
         sum_quantity = 0
@@ -118,7 +118,7 @@ class MatchingEngine:
 
         data = self._get_exec_report_dict(matched_amount, matched_price)
         self.server.add_to_broadcast(data)
-        data = self._get_price_sum_dict(order_list2)
+        data = self.get_price_sum_dict(order_list2)
         self.server.add_to_broadcast(data)
 
         return matched_whole
@@ -150,7 +150,7 @@ class MatchingEngine:
             matched_whole = matching_loop(matched_storage, extreme_key_func, lambda x, y: x > y)
 
         if not matched_whole:
-            data = self._get_price_sum_dict(original_storage[order.price])
+            data = self.get_price_sum_dict(original_storage[order.price])
             self.server.add_to_broadcast(data)
 
         self.log.debug("Stopped matching of \"{}\"".format(order))
