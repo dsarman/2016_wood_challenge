@@ -7,7 +7,7 @@ import transaction
 from BTrees.OOBTree import OOBTree
 from decimal import Decimal
 from persistent.list import PersistentList
-from challenge.models import OrderType, Order, User
+from models import OrderType, Order, User
 from datetime import datetime
 
 

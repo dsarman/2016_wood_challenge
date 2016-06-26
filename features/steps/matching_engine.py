@@ -2,8 +2,8 @@ import uuid
 from behave import *
 from decimal import Decimal
 from hamcrest import *
-from challenge.matching import MatchingEngine
-from challenge.models import Order, OrderType, User
+from matching import MatchingEngine
+from models import Order, OrderType, User
 
 
 @given("orders data")
@@ -22,7 +22,7 @@ def step_impl(context):
         order.set_id(order_id)
         if order_type == 'BID':
             order.set_type(OrderType.bid)
-        elif order_type == 'ASK':
+        else:
             order.set_type(OrderType.ask)
         order.set_quantity(quantity)
         order.set_price(price)

@@ -7,6 +7,10 @@ import BTrees.OOBTree
 import ZODB
 from typing import Dict, List
 from hamcrest import *
+import os
+import sys
+
+sys.path.insert(1, os.path.abspath('challenge'))
 from challenge.models import Order
 from challenge.server import ExchangeServer
 

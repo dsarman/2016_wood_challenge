@@ -2,8 +2,8 @@
 import uuid
 from logging import Logger
 from typing import List
-from challenge.matching import MatchingEngine
-from challenge.models import User, Order, OrderType
+from matching import MatchingEngine
+from models import User, Order, OrderType
 from typing import Dict, Any
 from asyncio import StreamReader, StreamWriter, AbstractEventLoop, AbstractServer, new_event_loop, start_server, Queue
 import logging
